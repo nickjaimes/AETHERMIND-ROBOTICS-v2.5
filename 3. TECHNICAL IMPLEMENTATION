@@ -1,0 +1,2976 @@
+🧪 AETHERMIND v2.5: Comprehensive Technical Implementation Guide
+
+1. CHEMICAL INTELLIGENCE CORE: Detailed Architecture
+
+1.1 Molecular Representation & Knowledge Graph
+
+Core Data Structure: Quantum-Informed Molecular Graph
+
+```python
+import torch
+from torch_geometric.data import Data
+import rdkit.Chem as Chem
+from rdkit.Chem import AllChem
+
+class QuantumMolecularGraph:
+    """
+    Multi-fidelity molecular representation combining:
+    1. Topological graph (atoms/bonds)
+    2. Electronic structure features
+    3. Conformational ensemble
+    4. Reactivity descriptors
+    """
+    
+    def __init__(self, smiles: str):
+        self.mol = Chem.MolFromSmiles(smiles)
+        self.graph = self._create_graph_representation()
+        self.quantum_features = self._compute_dft_features()
+        self.conformers = self._generate_conformer_ensemble()
+        self.reactivity_profile = self._calculate_reactivity()
+    
+    def _create_graph_representation(self) -> Data:
+        """Create PyTorch Geometric graph with advanced features"""
+        atom_features = []
+        for atom in self.mol.GetAtoms():
+            features = [
+                atom.GetAtomicNum(),
+                atom.GetDegree(),
+                atom.GetFormalCharge(),
+                atom.GetHybridization().real,
+                atom.GetIsAromatic(),
+                atom.GetMass(),
+                atom.GetNumRadicalElectrons(),
+                atom.GetTotalNumHs(),
+            ]
+            # Add Morgan fingerprints for local environment
+            fp = AllChem.GetMorganFingerprintAsBitVect(self.mol, radius=2, nBits=64)
+            features.extend(fp)
+            atom_features.append(features)
+        
+        edge_index = []
+        edge_attr = []
+        for bond in self.mol.GetBonds():
+            i = bond.GetBeginAtomIdx()
+            j = bond.GetEndAtomIdx()
+            edge_index.append([i, j])
+            edge_index.append([j, i])  # Undirected
+            
+            bond_features = [
+                bond.GetBondTypeAsDouble(),
+                bond.GetIsConjugated(),
+                bond.IsInRing(),
+                bond.GetStereo().real,
+            ]
+            edge_attr.append(bond_features)
+            edge_attr.append(bond_features)  # Both directions
+        
+        return Data(
+            x=torch.tensor(atom_features, dtype=torch.float),
+            edge_index=torch.tensor(edge_index, dtype=torch.long).t().contiguous(),
+            edge_attr=torch.tensor(edge_attr, dtype=torch.float),
+            smiles=smiles
+        )
+    
+    def _compute_dft_features(self) -> Dict:
+        """Compute DFT-level features using TorchANI or equivariant networks"""
+        # Using a pre-trained neural quantum architecture
+        import torchani
+        
+        # Convert to coordinates (requires 3D conformation)
+        self.mol = Chem.AddHs(self.mol)
+        AllChem.EmbedMolecule(self.mol, randomSeed=42)
+        AllChem.MMFFOptimizeMolecule(self.mol)
+        
+        coordinates = torch.tensor(self.mol.GetConformers()[0].GetPositions())
+        atomic_numbers = torch.tensor([atom.GetAtomicNum() for atom in self.mol.GetAtoms()])
+        
+        # Neural network potential for quantum properties
+        model = torchani.models.ANI2x()
+        energy = model((atomic_numbers, coordinates)).energies
+        atomic_energies = model.atomic_energies((atomic_numbers, coordinates))
+        
+        # Compute reactivity descriptors
+        partial_charges = self._compute_nbo_charges()
+        fukui_indices = self._compute_fukui_indices()
+        
+        return {
+            'total_energy': energy.item(),
+            'atomic_energies': atomic_energies,
+            'partial_charges': partial_charges,
+            'fukui_indices': fukui_indices,
+            'homo_lumo_gap': self._compute_frontier_orbitals()
+        }
+    
+    def _generate_conformer_ensemble(self, n_conformers: int = 50) -> List:
+        """Generate conformational ensemble using CREST-like approach"""
+        conformers = []
+        for i in range(n_conformers):
+            mol_copy = Chem.Mol(self.mol)
+            AllChem.EmbedMolecule(mol_copy, randomSeed=i)
+            AllChem.MMFFOptimizeMolecule(mol_copy)
+            
+            # Compute conformational energy
+            conf_energy = self._compute_conformer_energy(mol_copy)
+            
+            conformers.append({
+                'coordinates': mol_copy.GetConformers()[0].GetPositions(),
+                'energy': conf_energy,
+                'rmsd': self._compute_rmsd_to_reference(mol_copy)
+            })
+        
+        # Boltzmann weighting at 298K
+        energies = [c['energy'] for c in conformers]
+        boltzmann_weights = np.exp(-np.array(energies) / (0.001987 * 298))
+        boltzmann_weights /= boltzmann_weights.sum()
+        
+        return [{'conf': c, 'weight': w} for c, w in zip(conformers, boltzmann_weights)]
+```
+
+1.2 Retrosynthesis Planner: Neural-Symbolic Architecture
+
+```python
+import networkx as nx
+from typing import List, Dict, Tuple
+import numpy as np
+
+class NeuralSymbolicRetrosynthesisPlanner:
+    """
+    Hybrid retrosynthesis planner combining:
+    1. Transformer-based template prediction
+    2. Graph neural network for feasibility scoring
+    3. Symbolic constraint satisfaction
+    4. Cost optimization
+    """
+    
+    def __init__(self):
+        self.template_predictor = self._load_template_predictor()
+        self.feasibility_scorer = self._load_feasibility_model()
+        self.reaction_knowledge_graph = self._load_reaction_kg()
+        self.cost_optimizer = CostOptimizer()
+        
+    async def plan_synthesis(self, target_smiles: str, 
+                           constraints: Dict = None) -> List[Dict]:
+        """
+        Generate multiple synthetic routes with scoring
+        """
+        # Step 1: Template application (neural)
+        candidate_routes = await self._apply_templates(target_smiles)
+        
+        # Step 2: Feasibility scoring (neural + symbolic)
+        scored_routes = []
+        for route in candidate_routes:
+            # Neural scoring
+            neural_score = await self.feasibility_scorer.predict(route)
+            
+            # Symbolic constraints checking
+            symbolic_valid = self._check_symbolic_constraints(route, constraints)
+            
+            # Knowledge graph validation
+            kg_support = self._query_knowledge_graph(route)
+            
+            # Cost optimization
+            cost_analysis = await self.cost_optimizer.analyze_route(route)
+            
+            scored_routes.append({
+                'route': route,
+                'neural_score': neural_score,
+                'symbolic_valid': symbolic_valid,
+                'kg_support': kg_support,
+                'cost_analysis': cost_analysis,
+                'composite_score': self._compute_composite_score(
+                    neural_score, symbolic_valid, kg_support, cost_analysis
+                )
+            })
+        
+        # Step 3: Route optimization via beam search
+        optimized_routes = await self._beam_search_optimization(
+            scored_routes,
+            beam_width=10,
+            max_depth=7
+        )
+        
+        return optimized_routes
+    
+    def _load_reaction_kg(self) -> nx.DiGraph:
+        """Load reaction knowledge graph with 10M+ reactions"""
+        kg = nx.DiGraph()
+        
+        # Load from reaction databases
+        reactions = self._load_reaxys_reactions()
+        
+        for rxn in reactions:
+            # Add reaction node
+            kg.add_node(rxn['id'], type='reaction', **rxn)
+            
+            # Connect to reactants
+            for reactant in rxn['reactants']:
+                reactant_id = f"compound_{hash(reactant)}"
+                if reactant_id not in kg:
+                    kg.add_node(reactant_id, type='compound', smiles=reactant)
+                kg.add_edge(reactant_id, rxn['id'], role='reactant')
+            
+            # Connect to products
+            for product in rxn['products']:
+                product_id = f"compound_{hash(product)}"
+                if product_id not in kg:
+                    kg.add_node(product_id, type='compound', smiles=product)
+                kg.add_edge(rxn['id'], product_id, role='product')
+            
+            # Add conditions as properties
+            kg.nodes[rxn['id']]['conditions'] = rxn['conditions']
+            kg.nodes[rxn['id']]['yield'] = rxn['yield']
+            kg.nodes[rxn['id']]['references'] = rxn['references']
+        
+        # Compute graph metrics for scoring
+        self._compute_kg_metrics(kg)
+        
+        return kg
+    
+    async def _beam_search_optimization(self, routes: List[Dict], 
+                                      beam_width: int, 
+                                      max_depth: int) -> List[Dict]:
+        """
+        Beam search for optimal synthetic route
+        """
+        from collections import deque
+        import heapq
+        
+        # Priority queue for beam search
+        beam = []
+        initial_state = {
+            'route': [],
+            'score': 0.0,
+            'cost': 0.0,
+            'depth': 0,
+            'precursors': set([target_smiles])
+        }
+        heapq.heappush(beam, (-initial_state['score'], initial_state))
+        
+        best_routes = []
+        
+        while beam and len(best_routes) < beam_width:
+            neg_score, state = heapq.heappop(beam)
+            
+            if state['depth'] >= max_depth:
+                best_routes.append(state)
+                continue
+            
+            # Expand current state
+            current_compound = next(iter(state['precursors']))
+            expansions = await self._expand_compound(current_compound)
+            
+            for expansion in expansions:
+                new_precursors = (state['precursors'] - {current_compound}) | set(expansion['reactants'])
+                
+                # Calculate new score
+                route_score = self._calculate_route_score(
+                    state['route'] + [expansion],
+                    new_precursors
+                )
+                
+                # Calculate cost
+                route_cost = state['cost'] + expansion['estimated_cost']
+                
+                new_state = {
+                    'route': state['route'] + [expansion],
+                    'score': route_score,
+                    'cost': route_cost,
+                    'depth': state['depth'] + 1,
+                    'precursors': new_precursors
+                }
+                
+                # Add to beam
+                heapq.heappush(beam, (-route_score, new_state))
+            
+            # Prune beam
+            if len(beam) > beam_width * 2:
+                beam = heapq.nsmallest(beam_width, beam)
+        
+        return sorted(best_routes, key=lambda x: x['score'], reverse=True)[:beam_width]
+```
+
+2. ROBOTIC CONTROL SYSTEM: ROS 2 IMPLEMENTATION
+
+2.1 ROS 2 Node Architecture
+
+```python
+# File: sar_chem_robot/robot_control_system.py
+import rclpy
+from rclpy.node import Node
+from rclpy.action import ActionServer, ActionClient
+from rclpy.executors import MultiThreadedExecutor
+import numpy as np
+from typing import Dict, List
+
+# Custom messages
+from sar_chem_msgs.msg import (
+    ChemicalReactionGoal,
+    ReactionProgress,
+    ReactionResult,
+    RobotStatus,
+    SafetyAlert
+)
+from sar_chem_msgs.action import ExecuteReaction
+from geometry_msgs.msg import Pose, Twist
+from sensor_msgs.msg import JointState, Image, Temperature
+
+class ChemicalRobotControlNode(Node):
+    """
+    Main ROS 2 node for chemical robot control
+    Implements Action servers for high-level chemical commands
+    """
+    
+    def __init__(self):
+        super().__init__('chemical_robot_controller')
+        
+        # Action Servers (high-level chemical commands)
+        self._reaction_action_server = ActionServer(
+            self,
+            ExecuteReaction,
+            'execute_reaction',
+            self._execute_reaction_callback
+        )
+        
+        # Publishers
+        self._status_publisher = self.create_publisher(
+            RobotStatus, 
+            'robot/status', 
+            10
+        )
+        self._safety_publisher = self.create_publisher(
+            SafetyAlert,
+            'safety/alerts',
+            10
+        )
+        
+        # Subscribers
+        self._joint_state_subscriber = self.create_subscription(
+            JointState,
+            'joint_states',
+            self._joint_state_callback,
+            10
+        )
+        
+        # Service Clients for hardware control
+        self._arm_client = self.create_client(
+            MoveArm, 
+            'arm_control/move'
+        )
+        self._gripper_client = self.create_client(
+            ControlGripper,
+            'gripper_control'
+        )
+        self._liquid_handling_client = self.create_client(
+            DispenseLiquid,
+            'liquid_handling/dispense'
+        )
+        
+        # Internal state
+        self.current_reaction = None
+        self.robot_status = RobotStatus()
+        self.safety_monitor = SafetyMonitor(self)
+        
+        # Timer for status updates
+        self.create_timer(1.0, self._publish_status)
+        
+        self.get_logger().info('Chemical Robot Control Node initialized')
+    
+    async def _execute_reaction_callback(self, goal_handle):
+        """
+        Execute a chemical reaction from high-level description
+        """
+        goal: ChemicalReactionGoal = goal_handle.request
+        
+        # Step 1: Parse reaction into robotic actions
+        reaction_plan = await self._parse_reaction_to_actions(goal.reaction_smiles)
+        
+        # Step 2: Safety check
+        safety_ok = await self.safety_monitor.validate_reaction_plan(reaction_plan)
+        if not safety_ok:
+            goal_handle.abort()
+            return ExecuteReaction.Result(success=False, error="Safety validation failed")
+        
+        # Step 3: Execute sequential actions
+        feedback_msg = ExecuteReaction.Feedback()
+        
+        for i, action in enumerate(reaction_plan['actions']):
+            # Publish progress
+            feedback_msg.progress = i / len(reaction_plan['actions'])
+            feedback_msg.current_action = action['description']
+            goal_handle.publish_feedback(feedback_msg)
+            
+            # Execute action based on type
+            try:
+                if action['type'] == 'move_arm':
+                    await self._execute_arm_movement(action)
+                elif action['type'] == 'dispense':
+                    await self._execute_dispensing(action)
+                elif action['type'] == 'heat_stir':
+                    await self._execute_heating_stirring(action)
+                elif action['type'] == 'measure':
+                    await self._execute_measurement(action)
+                
+                # Check for safety violations during execution
+                if await self.safety_monitor.check_violations():
+                    raise SafetyViolationError("Safety threshold exceeded")
+                    
+            except Exception as e:
+                self.get_logger().error(f"Action failed: {str(e)}")
+                goal_handle.abort()
+                return ExecuteReaction.Result(
+                    success=False, 
+                    error=f"Action {i} failed: {str(e)}"
+                )
+        
+        # Step 4: Return results
+        result = ExecuteReaction.Result()
+        result.success = True
+        result.final_yield = reaction_plan.get('estimated_yield', 0.0)
+        result.purity_data = await self._analyze_final_product()
+        
+        goal_handle.succeed()
+        return result
+    
+    async def _parse_reaction_to_actions(self, reaction_smiles: str) -> Dict:
+        """
+        Convert SMILES reaction string to robotic action sequence
+        """
+        from rdkit import Chem
+        
+        # Parse reaction
+        rxn = Chem.AllChem.ReactionFromSmarts(reaction_smiles)
+        reactants = rxn.GetReactants()
+        products = rxn.GetProducts()
+        
+        # Query database for known conditions
+        conditions = await self._query_reaction_conditions(reaction_smiles)
+        
+        # Generate action sequence
+        actions = []
+        
+        # 1. Preparation actions
+        for i, reactant in enumerate(reactants):
+            actions.append({
+                'type': 'dispense',
+                'description': f'Dispense reactant {i+1}',
+                'compound': Chem.MolToSmiles(reactant),
+                'amount_mmol': conditions.get('stoichiometry', [1.0])[i],
+                'source_vial': f'reactant_stock_{i}',
+                'target_vessel': 'main_reactor'
+            })
+        
+        # 2. Solvent addition
+        if 'solvent' in conditions:
+            actions.append({
+                'type': 'dispense',
+                'description': 'Add solvent',
+                'compound': conditions['solvent'],
+                'volume_ml': conditions['solvent_volume'],
+                'source_vial': 'solvent_stock',
+                'target_vessel': 'main_reactor'
+            })
+        
+        # 3. Catalyst addition
+        if 'catalyst' in conditions:
+            actions.append({
+                'type': 'dispense',
+                'description': 'Add catalyst',
+                'compound': conditions['catalyst'],
+                'amount_mg': conditions['catalyst_mass'],
+                'source_vial': 'catalyst_stock',
+                'target_vessel': 'main_reactor'
+            })
+        
+        # 4. Reaction conditions
+        actions.append({
+            'type': 'heat_stir',
+            'description': 'Set reaction conditions',
+            'temperature_c': conditions.get('temperature', 25.0),
+            'stirring_rpm': conditions.get('stirring', 300),
+            'duration_hours': conditions.get('duration', 24.0),
+            'atmosphere': conditions.get('atmosphere', 'air'),
+            'reflux': conditions.get('reflux', False)
+        })
+        
+        # 5. Monitoring actions
+        for t in [1, 6, 12, 24]:  # hours
+            actions.append({
+                'type': 'measure',
+                'description': f'Sample reaction at {t}h',
+                'sample_volume_ul': 100,
+                'analysis_type': 'lcms',
+                'timepoint_h': t
+            })
+        
+        # 6. Workup actions
+        actions.extend(await self._generate_workup_actions(conditions))
+        
+        return {
+            'reaction_smiles': reaction_smiles,
+            'reactants': [Chem.MolToSmiles(r) for r in reactants],
+            'products': [Chem.MolToSmiles(p) for p in products],
+            'actions': actions,
+            'estimated_yield': conditions.get('typical_yield', 70.0)
+        }
+```
+
+2.2 Motion Planning & Control
+
+```python
+# File: sar_chem_robot/motion_planner.py
+import moveit_ros2.planning_interface as moveit
+from moveit_msgs.msg import RobotTrajectory
+import numpy as np
+from scipy.interpolate import CubicSpline
+
+class ChemicalMotionPlanner:
+    """
+    Advanced motion planning for chemical manipulations
+    Includes collision avoidance, liquid slosh prevention,
+    and coordinated multi-arm movements
+    """
+    
+    def __init__(self, node):
+        self.node = node
+        self.move_group = moveit.MoveGroupInterface(
+            node, 
+            "manipulator_arm", 
+            "robot_description"
+        )
+        
+        # Scene for collision objects
+        self.planning_scene = moveit.PlanningSceneInterface(node)
+        
+        # Trajectory optimization
+        self.trajectory_optimizer = TrajectoryOptimizer()
+        
+        # Known lab equipment positions
+        self.lab_geometry = self._load_lab_geometry()
+        
+    async def plan_pick_and_place(self, 
+                                 start_pose: Pose,
+                                 end_pose: Pose,
+                                 object_type: str,
+                                 object_dimensions: Dict) -> RobotTrajectory:
+        """
+        Plan pick and place motion with chemical safety constraints
+        """
+        # Step 1: Add object to planning scene
+        await self._add_object_to_scene(
+            object_type, 
+            object_dimensions, 
+            start_pose
+        )
+        
+        # Step 2: Plan approach trajectory
+        approach_pose = self._compute_approach_pose(start_pose)
+        approach_trajectory = await self.plan_cartesian_path(
+            [approach_pose],
+            avoid_collisions=True,
+            max_velocity_scale=0.3  # Slow for precision
+        )
+        
+        # Step 3: Plan grasp motion
+        grasp_trajectory = await self.plan_linear_motion(
+            start_pose,
+            max_linear_speed=0.05,  # Very slow for contact
+            force_limits={'x': 5.0, 'y': 5.0, 'z': 2.0}  # Newtons
+        )
+        
+        # Step 4: Plan lift motion
+        lift_pose = self._compute_lift_pose(start_pose, height=0.1)
+        lift_trajectory = await self.plan_cartesian_path(
+            [lift_pose],
+            avoid_collisions=True
+        )
+        
+        # Step 5: Plan transport to destination
+        transport_trajectory = await self.plan_smooth_transport(
+            lift_pose,
+            end_pose,
+            constraints=self._get_liquid_transport_constraints()
+        )
+        
+        # Step 6: Combine trajectories with smooth transitions
+        combined_trajectory = self.trajectory_optimizer.concatenate_trajectories(
+            [approach_trajectory, grasp_trajectory, 
+             lift_trajectory, transport_trajectory],
+            blend_radius=0.02  # Smooth blending between segments
+        )
+        
+        # Step 7: Optimize for energy efficiency and smoothness
+        optimized_trajectory = await self.trajectory_optimizer.optimize(
+            combined_trajectory,
+            objectives=['energy', 'smoothness', 'time'],
+            constraints={'max_jerk': 100.0, 'max_accel': 5.0}
+        )
+        
+        return optimized_trajectory
+    
+    def _get_liquid_transport_constraints(self) -> Dict:
+        """
+        Get constraints for liquid transport to prevent sloshing
+        Based on pendulum model of liquid in container
+        """
+        return {
+            'max_linear_accel': 0.5,  # m/s²
+            'max_angular_accel': 0.2,  # rad/s²
+            'max_jerk': 2.0,  # m/s³
+            'preferred_orientation': 'vertical',  # Keep container upright
+            'vibration_limits': {
+                'frequency': 2.0,  # Hz (natural frequency of liquid)
+                'amplitude': 0.001  # m (maximum vibration amplitude)
+            }
+        }
+    
+    async def plan_cartesian_path(self, 
+                                 waypoints: List[Pose],
+                                 avoid_collisions: bool = True,
+                                 **kwargs) -> RobotTrajectory:
+        """
+        Plan Cartesian path through waypoints
+        """
+        # Compute joint positions for each waypoint
+        joint_waypoints = []
+        for pose in waypoints:
+            joint_state = await self.move_group.compute_ik(
+                pose,
+                timeout_sec=1.0
+            )
+            if joint_state:
+                joint_waypoints.append(joint_state)
+            else:
+                raise IKError(f"Cannot compute IK for pose: {pose}")
+        
+        # Plan trajectory through joint waypoints
+        trajectory = await self.move_group.plan_joint_space_path(
+            joint_waypoints,
+            avoid_collisions=avoid_collisions,
+            **kwargs
+        )
+        
+        # Add time parameterization for smooth execution
+        trajectory = self._add_time_parameterization(
+            trajectory,
+            max_velocity_scaling=kwargs.get('max_velocity_scale', 1.0),
+            max_acceleration_scaling=kwargs.get('max_accel_scale', 1.0)
+        )
+        
+        return trajectory
+```
+
+3. LABORATORY HARDWARE INTEGRATION
+
+3.1 Universal Chemistry Module (UCM)
+
+```python
+# File: sar_chem_hardware/universal_chemistry_module.py
+import asyncio
+from typing import Dict, List, Optional
+import numpy as np
+from dataclasses import dataclass
+from enum import Enum
+
+@dataclass
+class ReactionVessel:
+    """Standardized reaction vessel interface"""
+    vessel_id: str
+    volume_ml: float
+    material: str  # 'glass', 'ptfe', 'stainless_steel'
+    max_temp_c: float
+    max_pressure_bar: float
+    ports: List[str]  # ['reagent_in', 'gas_in', 'sampling', 'vent']
+    stirring: bool
+    heating: bool
+    cooling: bool
+    
+class UCMController:
+    """
+    Universal Chemistry Module Controller
+    Manages all reaction vessels and their peripherals
+    """
+    
+    def __init__(self, config_file: str):
+        self.vessels: Dict[str, ReactionVessel] = {}
+        self._load_configuration(config_file)
+        
+        # Hardware interfaces
+        self.temperature_controllers = {}
+        self.pressure_sensors = {}
+        self.stirring_controllers = {}
+        self.pumping_systems = {}
+        self.sampling_robots = {}
+        
+        # Initialize all hardware
+        self._initialize_hardware()
+        
+        # Safety systems
+        self.safety_interlocks = SafetyInterlockSystem()
+        self.emergency_protocols = EmergencyProtocols()
+        
+    async def execute_reaction_protocol(self, 
+                                       protocol: Dict) -> Dict:
+        """
+        Execute complete reaction protocol on UCM
+        """
+        # Step 1: Protocol validation
+        await self._validate_protocol(protocol)
+        
+        # Step 2: Vessel preparation
+        vessel = await self._prepare_vessel(
+            protocol['vessel_id'],
+            protocol.get('preparation', {})
+        )
+        
+        # Step 3: Reagent addition sequence
+        for addition in protocol['additions']:
+            await self._add_reagent(
+                vessel_id=protocol['vessel_id'],
+                reagent=addition['reagent'],
+                amount=addition['amount'],
+                rate=addition.get('rate', 'fast'),
+                temperature=addition.get('temperature', None)
+            )
+        
+        # Step 4: Reaction phase
+        reaction_data = await self._execute_reaction_phase(
+            vessel_id=protocol['vessel_id'],
+            conditions=protocol['conditions'],
+            monitoring=protocol.get('monitoring', {})
+        )
+        
+        # Step 5: Workup if specified
+        if 'workup' in protocol:
+            await self._execute_workup(
+                vessel_id=protocol['vessel_id'],
+                workup_steps=protocol['workup']
+            )
+        
+        # Step 6: Product isolation
+        product = await self._isolate_product(
+            vessel_id=protocol['vessel_id'],
+            isolation_method=protocol.get('isolation', 'evaporation')
+        )
+        
+        return {
+            'reaction_data': reaction_data,
+            'product': product,
+            'yield': self._calculate_yield(product, protocol['expected_product']),
+            'purity': await self._analyze_purity(product)
+        }
+    
+    async def _prepare_vessel(self, 
+                            vessel_id: str, 
+                            preparation: Dict) -> ReactionVessel:
+        """
+        Prepare reaction vessel with specified conditions
+        """
+        vessel = self.vessels[vessel_id]
+        
+        # Clean if needed
+        if preparation.get('clean', False):
+            await self._clean_vessel(vessel)
+        
+        # Dry if needed
+        if preparation.get('dry', False):
+            await self._dry_vessel(vessel)
+        
+        # Purge with inert gas
+        if 'purge_gas' in preparation:
+            await self._purge_vessel(
+                vessel,
+                gas=preparation['purge_gas'],
+                volume_equivalents=preparation.get('purge_cycles', 3)
+            )
+        
+        # Pre-heat/cool if specified
+        if 'initial_temperature' in preparation:
+            await self._set_temperature(
+                vessel,
+                temperature=preparation['initial_temperature'],
+                rate=preparation.get('heating_rate', 10)  # °C/min
+            )
+        
+        return vessel
+    
+    async def _execute_reaction_phase(self,
+                                     vessel_id: str,
+                                     conditions: Dict,
+                                     monitoring: Dict) -> Dict:
+        """
+        Execute main reaction phase with monitoring
+        """
+        vessel = self.vessels[vessel_id]
+        reaction_data = {
+            'temperature': [],
+            'pressure': [],
+            'stirring': [],
+            'ph': [],
+            'spectra': [],
+            'samples': []
+        }
+        
+        # Set initial conditions
+        await self._set_temperature(vessel, conditions['temperature'])
+        await self._set_stirring(vessel, conditions.get('stirring_rpm', 300))
+        
+        # Main reaction loop
+        start_time = asyncio.get_event_loop().time()
+        duration_hours = conditions['duration_hours']
+        
+        while (asyncio.get_event_loop().time() - start_time) < duration_hours * 3600:
+            # Safety checks
+            if not await self.safety_interlocks.check_vessel(vessel):
+                await self.emergency_protocols.initiate_shutdown(vessel)
+                raise SafetyViolationError(f"Safety interlock triggered for {vessel_id}")
+            
+            # Record data
+            reaction_data['temperature'].append(
+                await self._read_temperature(vessel)
+            )
+            reaction_data['pressure'].append(
+                await self._read_pressure(vessel)
+            )
+            
+            # Take samples if scheduled
+            current_time_h = (asyncio.get_event_loop().time() - start_time) / 3600
+            if monitoring.get('sampling_schedule'):
+                for sample_time in monitoring['sampling_schedule']:
+                    if abs(current_time_h - sample_time) < 0.01:  # Within 36 seconds
+                        sample = await self._take_sample(vessel, sample_time)
+                        reaction_data['samples'].append(sample)
+            
+            # In-line spectroscopy
+            if monitoring.get('inline_spectroscopy'):
+                spectrum = await self._acquire_spectrum(vessel)
+                reaction_data['spectra'].append({
+                    'time': current_time_h,
+                    'spectrum': spectrum
+                })
+            
+            # Adjust conditions if needed
+            if 'temperature_ramp' in conditions:
+                target_temp = self._compute_ramped_temperature(
+                    current_time_h,
+                    conditions['temperature_ramp']
+                )
+                await self._set_temperature(vessel, target_temp)
+            
+            await asyncio.sleep(monitoring.get('sampling_interval', 60))  # Default 1 minute
+        
+        return reaction_data
+    
+    async def _take_sample(self, 
+                          vessel: ReactionVessel, 
+                          sample_time: float) -> Dict:
+        """
+        Take automated sample from reaction vessel
+        """
+        # Position sampling needle
+        await self.sampling_robots[vessel.vessel_id].move_to_sampling_position()
+        
+        # Purge sampling line
+        await self._purge_sampling_line(vessel)
+        
+        # Withdraw sample
+        sample_volume_ul = 100  # Default
+        sample = await self.sampling_robots[vessel.vessel_id].withdraw_sample(
+            volume_ul=sample_volume_ul
+        )
+        
+        # Transfer to analysis
+        if self._analysis_system_available():
+            analysis_results = await self._analyze_sample(sample)
+            sample['analysis'] = analysis_results
+        
+        return {
+            'time_h': sample_time,
+            'volume_ul': sample_volume_ul,
+            'analysis': sample.get('analysis', {}),
+            'raw_sample': sample  # For offline analysis if needed
+        }
+```
+
+3.2 Automated Analytical System
+
+```python
+# File: sar_chem_hardware/analytical_orchestrator.py
+class AnalyticalOrchestrator:
+    """
+    Coordinates multiple analytical instruments for automated analysis
+    Supports LC-MS, GC-MS, NMR, HPLC, etc.
+    """
+    
+    def __init__(self):
+        self.instruments = {
+            'lcms': LCMSController('agilent_1260_6230'),
+            'gcms': GCMSController('thermo_isq'),
+            'nmr': NMRController('bruker_400'),
+            'hplc': HPLCController('waters_2695'),
+            'ftir': FTIRController('nicolet_is50'),
+            'raman': RamanController('renishaw_invia')
+        }
+        
+        self.autosampler = AutosamplerRobot()
+        self.sample_tracking = SampleTrackingSystem()
+        
+        # Method database
+        self.analytical_methods = self._load_method_database()
+    
+    async def analyze_sample(self, 
+                           sample: Dict,
+                           required_analyses: List[str]) -> Dict:
+        """
+        Perform comprehensive sample analysis
+        """
+        analysis_results = {}
+        
+        # Prepare sample for analysis
+        prepared_samples = await self._prepare_sample(sample, required_analyses)
+        
+        # Execute analyses in parallel where possible
+        analysis_tasks = []
+        
+        for analysis_type in required_analyses:
+            if analysis_type in self.instruments:
+                task = asyncio.create_task(
+                    self._execute_single_analysis(
+                        prepared_samples[analysis_type],
+                        analysis_type
+                    )
+                )
+                analysis_tasks.append((analysis_type, task))
+        
+        # Wait for all analyses to complete
+        for analysis_type, task in analysis_tasks:
+            try:
+                result = await task
+                analysis_results[analysis_type] = result
+            except Exception as e:
+                self.logger.error(f"Analysis {analysis_type} failed: {e}")
+                analysis_results[analysis_type] = {'error': str(e)}
+        
+        # Integrate results
+        integrated_results = await self._integrate_analytical_data(
+            analysis_results
+        )
+        
+        # Store in database
+        await self.sample_tracking.store_results(
+            sample_id=sample.get('id'),
+            results=integrated_results
+        )
+        
+        return integrated_results
+    
+    async def _execute_single_analysis(self,
+                                     sample: Dict,
+                                     analysis_type: str) -> Dict:
+        """
+        Execute analysis on specific instrument
+        """
+        instrument = self.instruments[analysis_type]
+        
+        # Select appropriate method
+        method = await self._select_analytical_method(
+            sample, 
+            analysis_type
+        )
+        
+        # Load method on instrument
+        await instrument.load_method(method)
+        
+        # Inject sample
+        await self.autosampler.transfer_to_instrument(
+            sample=sample,
+            instrument=instrument
+        )
+        
+        # Run analysis
+        raw_data = await instrument.run_analysis()
+        
+        # Process data
+        processed_data = await instrument.process_data(raw_data)
+        
+        # Extract features
+        features = await self._extract_features(processed_data, analysis_type)
+        
+        return {
+            'raw_data': raw_data,
+            'processed_data': processed_data,
+            'features': features,
+            'method': method,
+            'instrument': instrument.get_metadata(),
+            'timestamp': asyncio.get_event_loop().time()
+        }
+    
+    async def _integrate_analytical_data(self, 
+                                       results: Dict[str, Dict]) -> Dict:
+        """
+        Integrate data from multiple analytical techniques
+        """
+        # Molecular formula from high-res MS
+        if 'lcms' in results and 'exact_mass' in results['lcms']['features']:
+            formula_candidates = self._generate_formula_candidates(
+                results['lcms']['features']['exact_mass'],
+                tolerance_ppm=5
+            )
+        
+        # Structural information from NMR
+        if 'nmr' in results:
+            nmr_shifts = results['nmr']['features']['chemical_shifts']
+            coupling_constants = results['nmr']['features']['j_coupling']
+            
+            # Predict structure from NMR
+            predicted_structures = await self._predict_structure_from_nmr(
+                nmr_shifts,
+                coupling_constants,
+                formula_candidates
+            )
+        
+        # Functional groups from IR
+        if 'ftir' in results:
+            functional_groups = self._identify_functional_groups(
+                results['ftir']['features']['absorption_bands']
+            )
+        
+        # Purity from HPLC
+        if 'hplc' in results:
+            purity = results['hplc']['features']['purity_percent']
+            impurities = results['hplc']['features']['impurity_peaks']
+        
+        # Integrate all evidence
+        integrated_structure = await self._integrate_structural_evidence(
+            {
+                'ms_formula': formula_candidates,
+                'nmr_structures': predicted_structures,
+                'ir_groups': functional_groups,
+                'hplc_purity': purity
+            }
+        )
+        
+        return {
+            'proposed_structure': integrated_structure['best_structure'],
+            'confidence_score': integrated_structure['confidence'],
+            'alternative_structures': integrated_structure['alternatives'],
+            'purity': purity,
+            'impurities': impurities,
+            'spectral_data': {k: v['features'] for k, v in results.items()}
+        }
+```
+
+4. AI/ML MODELS FOR CHEMICAL INTELLIGENCE
+
+4.1 Reaction Outcome Predictor
+
+```python
+# File: sar_chem_ai/reaction_predictor.py
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.nn import GCNConv, global_mean_pool
+import numpy as np
+from typing import Tuple, List
+
+class ReactionOutcomePredictor(nn.Module):
+    """
+    Neural network for predicting reaction outcomes
+    Uses graph neural networks for molecules and transformers for conditions
+    """
+    
+    def __init__(self, 
+                 node_features: int = 128,
+                 edge_features: int = 64,
+                 hidden_dim: int = 256,
+                 num_layers: int = 6,
+                 num_heads: int = 8,
+                 dropout: float = 0.1):
+        super().__init__()
+        
+        # Molecular encoders (shared weights)
+        self.reactant_encoder = MolecularGNN(
+            node_features, edge_features, hidden_dim
+        )
+        self.reagent_encoder = MolecularGNN(
+            node_features, edge_features, hidden_dim
+        )
+        
+        # Condition encoder (transformer)
+        self.condition_encoder = ConditionTransformer(
+            hidden_dim, num_layers, num_heads, dropout
+        )
+        
+        # Reaction encoder (processes combined representations)
+        self.reaction_encoder = ReactionEncoder(
+            hidden_dim * 3,  # Reactants, reagents, conditions
+            hidden_dim
+        )
+        
+        # Prediction heads
+        self.yield_predictor = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim // 2, 1),
+            nn.Sigmoid()  # Yield between 0-1
+        )
+        
+        self.selectivity_predictor = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim // 2, 5),  # 5 selectivity classes
+            nn.Softmax(dim=-1)
+        )
+        
+        self.product_predictor = ProductPredictor(
+            hidden_dim, 
+            max_atoms=100
+        )
+        
+    def forward(self, 
+                reactant_graphs: List[Data],
+                reagent_graphs: List[Data],
+                conditions: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Forward pass to predict reaction outcomes
+        """
+        batch_size = len(reactant_graphs)
+        
+        # Encode reactants
+        reactant_features = []
+        for graph in reactant_graphs:
+            features = self.reactant_encoder(
+                graph.x, 
+                graph.edge_index, 
+                graph.edge_attr
+            )
+            reactant_features.append(features)
+        reactant_encoding = torch.stack(reactant_features, dim=0)
+        
+        # Encode reagents
+        reagent_features = []
+        for graph in reagent_graphs:
+            features = self.reagent_encoder(
+                graph.x,
+                graph.edge_index,
+                graph.edge_attr
+            )
+            reagent_features.append(features)
+        reagent_encoding = torch.stack(reagent_features, dim=0)
+        
+        # Encode conditions
+        condition_encoding = self.condition_encoder(conditions)
+        
+        # Combine encodings
+        combined = torch.cat([
+            reactant_encoding,
+            reagent_encoding,
+            condition_encoding
+        ], dim=-1)
+        
+        # Encode reaction
+        reaction_encoding = self.reaction_encoder(combined)
+        
+        # Make predictions
+        predictions = {
+            'yield': self.yield_predictor(reaction_encoding),
+            'selectivity': self.selectivity_predictor(reaction_encoding),
+            'product_logits': self.product_predictor(reaction_encoding)
+        }
+        
+        return predictions
+    
+    def predict_with_uncertainty(self,
+                               reactant_graphs: List[Data],
+                               reagent_graphs: List[Data],
+                               conditions: torch.Tensor,
+                               n_samples: int = 100) -> Dict:
+        """
+        Bayesian prediction with uncertainty estimation
+        Uses Monte Carlo dropout
+        """
+        self.train()  # Keep dropout active
+        
+        predictions = []
+        for _ in range(n_samples):
+            pred = self.forward(reactant_graphs, reagent_graphs, conditions)
+            predictions.append(pred)
+        
+        # Compute statistics
+        yields = torch.stack([p['yield'] for p in predictions])
+        mean_yield = yields.mean(dim=0)
+        std_yield = yields.std(dim=0)
+        
+        selectivities = torch.stack([p['selectivity'] for p in predictions])
+        mean_sel = selectivities.mean(dim=0)
+        std_sel = selectivities.std(dim=0)
+        
+        return {
+            'yield_mean': mean_yield,
+            'yield_std': std_yield,
+            'selectivity_mean': mean_sel,
+            'selectivity_std': std_sel,
+            'confidence': 1.0 / (std_yield + 1e-8),  # Inverse of uncertainty
+            'all_predictions': predictions
+        }
+
+class MolecularGNN(nn.Module):
+    """
+    Graph Neural Network for molecular representation
+    """
+    
+    def __init__(self, 
+                 node_in: int, 
+                 edge_in: int, 
+                 hidden_dim: int,
+                 num_layers: int = 4):
+        super().__init__()
+        
+        self.node_encoder = nn.Linear(node_in, hidden_dim)
+        self.edge_encoder = nn.Linear(edge_in, hidden_dim)
+        
+        self.convs = nn.ModuleList()
+        for i in range(num_layers):
+            self.convs.append(
+                GatedGCNConv(hidden_dim, hidden_dim)
+            )
+        
+        self.pool = AttentivePooling(hidden_dim)
+        
+    def forward(self, x, edge_index, edge_attr):
+        # Encode nodes and edges
+        x = self.node_encoder(x)
+        edge_attr = self.edge_encoder(edge_attr)
+        
+        # Apply GNN layers
+        for conv in self.convs:
+            x = conv(x, edge_index, edge_attr)
+        
+        # Pool to graph-level representation
+        graph_rep = self.pool(x)
+        
+        return graph_rep
+
+class ConditionTransformer(nn.Module):
+    """
+    Transformer for encoding reaction conditions
+    """
+    
+    def __init__(self, 
+                 hidden_dim: int, 
+                 num_layers: int,
+                 num_heads: int,
+                 dropout: float):
+        super().__init__()
+        
+        # Condition features: temperature, solvent, catalyst, etc.
+        self.condition_embedding = nn.Linear(20, hidden_dim)  # 20 condition features
+        
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=num_heads,
+            dim_feedforward=hidden_dim * 4,
+            dropout=dropout,
+            batch_first=True
+        )
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=num_layers
+        )
+        
+        self.output_projection = nn.Linear(hidden_dim, hidden_dim)
+        
+    def forward(self, conditions: torch.Tensor) -> torch.Tensor:
+        # conditions shape: (batch_size, num_conditions, feature_dim)
+        embedded = self.condition_embedding(conditions)
+        
+        # Add positional encoding for condition order
+        pos_enc = self._positional_encoding(embedded.size(1), embedded.size(2))
+        embedded = embedded + pos_enc.unsqueeze(0)
+        
+        # Apply transformer
+        encoded = self.transformer(embedded)
+        
+        # Pool across conditions
+        pooled = encoded.mean(dim=1)
+        
+        return self.output_projection(pooled)
+```
+
+4.2 Autonomous Experiment Design via Bayesian Optimization
+
+```python
+# File: sar_chem_ai/bayesian_optimizer.py
+import numpy as np
+import torch
+from botorch.models import SingleTaskGP
+from botorch.fit import fit_gpytorch_model
+from botorch.acquisition import ExpectedImprovement, UpperConfidenceBound
+from botorch.optim import optimize_acqf
+from gpytorch.mlls import ExactMarginalLogLikelihood
+from typing import Tuple, List, Optional
+
+class ChemicalBayesianOptimizer:
+    """
+    Bayesian Optimization for chemical reaction optimization
+    Supports high-dimensional chemical spaces with constraints
+    """
+    
+    def __init__(self, 
+                 search_space: Dict,
+                 objective_function: callable,
+                 constraints: Optional[List[callable]] = None):
+        
+        self.search_space = search_space
+        self.objective = objective_function
+        self.constraints = constraints or []
+        
+        # GP model for surrogate modeling
+        self.gp_model = None
+        self.train_x = None
+        self.train_y = None
+        
+        # Acquisition function
+        self.acquisition_function = ExpectedImprovement
+        
+        # History
+        self.history = {
+            'parameters': [],
+            'objectives': [],
+            'constraint_values': [],
+            'acquisition_values': []
+        }
+    
+    async def optimize(self, 
+                      n_iterations: int = 50,
+                      n_initial: int = 10,
+                      batch_size: int = 5) -> Dict:
+        """
+        Main optimization loop
+        """
+        # Step 1: Initial design
+        initial_points = await self._generate_initial_design(n_initial)
+        initial_results = await self._evaluate_points(initial_points)
+        
+        self._update_history(initial_points, initial_results)
+        
+        # Step 2: Iterative optimization
+        for iteration in range(n_iterations):
+            print(f"Iteration {iteration + 1}/{n_iterations}")
+            
+            # Fit GP model to current data
+            self._fit_gp_model()
+            
+            # Optimize acquisition function for next batch
+            next_points = await self._select_next_batch(batch_size)
+            
+            # Evaluate new points
+            results = await self._evaluate_points(next_points)
+            
+            # Update history
+            self._update_history(next_points, results)
+            
+            # Check convergence
+            if self._check_convergence():
+                print("Optimization converged")
+                break
+        
+        # Step 3: Return best result
+        best_idx = np.argmax(self.history['objectives'])
+        best_point = self.history['parameters'][best_idx]
+        
+        return {
+            'best_parameters': best_point,
+            'best_objective': self.history['objectives'][best_idx],
+            'history': self.history,
+            'converged': iteration < n_iterations - 1
+        }
+    
+    async def _generate_initial_design(self, n_points: int) -> np.ndarray:
+        """
+        Generate initial design using Latin Hypercube Sampling
+        with chemical feasibility constraints
+        """
+        from scipy.stats import qmc
+        
+        sampler = qmc.LatinHypercube(d=len(self.search_space))
+        sample = sampler.random(n=n_points)
+        
+        # Scale to actual parameter ranges
+        scaled_samples = []
+        for i, (param, bounds) in enumerate(self.search_space.items()):
+            if bounds['type'] == 'continuous':
+                scaled = qmc.scale(sample[:, i], bounds['min'], bounds['max'])
+            elif bounds['type'] == 'categorical':
+                # Convert continuous to categorical indices
+                n_categories = len(bounds['values'])
+                indices = (sample[:, i] * n_categories).astype(int)
+                indices = np.clip(indices, 0, n_categories - 1)
+                scaled = [bounds['values'][idx] for idx in indices]
+            
+            scaled_samples.append(scaled)
+        
+        initial_points = np.column_stack(scaled_samples)
+        
+        # Filter by chemical constraints
+        feasible_points = []
+        for point in initial_points:
+            if await self._check_chemical_feasibility(point):
+                feasible_points.append(point)
+        
+        return np.array(feasible_points[:n_points])
+    
+    async def _select_next_batch(self, batch_size: int) -> np.ndarray:
+        """
+        Select next batch of experiments using acquisition function
+        """
+        # Create acquisition function
+        acqf = self.acquisition_function(
+            model=self.gp_model,
+            best_f=self.train_y.max()
+        )
+        
+        # Add constraint handling
+        if self.constraints:
+            acqf = self._apply_constraints(acqf)
+        
+        # Optimize acquisition function
+        bounds = self._get_bounds_tensor()
+        
+        candidates, acq_values = optimize_acqf(
+            acq_function=acqf,
+            bounds=bounds,
+            q=batch_size,
+            num_restarts=20,
+            raw_samples=100,
+            sequential=True
+        )
+        
+        return candidates.detach().numpy()
+    
+    def _fit_gp_model(self):
+        """
+        Fit Gaussian Process model to current data
+        """
+        # Convert to torch tensors
+        train_x = torch.tensor(self.train_x, dtype=torch.float32)
+        train_y = torch.tensor(self.train_y, dtype=torch.float32).unsqueeze(-1)
+        
+        # Initialize GP
+        self.gp_model = SingleTaskGP(train_x, train_y)
+        
+        # Fit model
+        mll = ExactMarginalLogLikelihood(
+            self.gp_model.likelihood, 
+            self.gp_model
+        )
+        fit_gpytorch_model(mll)
+    
+    async def _evaluate_points(self, points: np.ndarray) -> Dict:
+        """
+        Evaluate points using the objective function
+        """
+        objectives = []
+        constraint_values = []
+        
+        for point in points:
+            # Run experiment
+            result = await self.objective(point)
+            
+            objectives.append(result['objective'])
+            
+            # Evaluate constraints
+            constraint_vals = []
+            for constraint in self.constraints:
+                constraint_vals.append(constraint(point))
+            constraint_values.append(constraint_vals)
+        
+        return {
+            'objectives': np.array(objectives),
+            'constraint_values': np.array(constraint_values)
+        }
+```
+
+5. DATA MANAGEMENT & PROVENANCE SYSTEM
+
+5.1 FAIR-Compliant Data Architecture
+
+```python
+# File: sar_chem_data/provenance_system.py
+import json
+import hashlib
+from datetime import datetime
+from typing import Dict, List, Any
+import sqlalchemy as sa
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship
+import rdkit.Chem as Chem
+from rdkit.Chem import AllChem
+
+Base = declarative_base()
+
+class ExperimentRecord(Base):
+    """
+    Complete experiment record with full provenance
+    Compliant with FAIR principles and FDA 21 CFR Part 11
+    """
+    __tablename__ = 'experiment_records'
+    
+    id = sa.Column(sa.String(64), primary_key=True)  # SHA-256 hash of experiment
+    timestamp = sa.Column(sa.DateTime, nullable=False)
+    researcher = sa.Column(sa.String(256))
+    project = sa.Column(sa.String(256))
+    
+    # Reaction information
+    reaction_smiles = sa.Column(sa.Text)
+    reactants = sa.Column(sa.JSON)  # List of SMILES with amounts
+    reagents = sa.Column(sa.JSON)
+    products = sa.Column(sa.JSON)
+    
+    # Conditions
+    temperature = sa.Column(sa.Float)
+    pressure = sa.Column(sa.Float)
+    solvent = sa.Column(sa.String(256))
+    catalyst = sa.Column(sa.String(256))
+    duration = sa.Column(sa.Float)
+    
+    # Robotic execution
+    robot_id = sa.Column(sa.String(64))
+    execution_log = sa.Column(sa.JSON)  # Full action sequence
+    sensor_data = sa.Column(sa.JSON)  # Time-series sensor data
+    
+    # Analytical results
+    analytical_data = sa.Column(sa.JSON)  # Links to raw instrument files
+    yield_percent = sa.Column(sa.Float)
+    purity_percent = sa.Column(sa.Float)
+    
+    # Metadata
+    metadata = sa.Column(sa.JSON)  # Custom metadata
+    version = sa.Column(sa.String(32))
+    
+    # Relationships
+    samples = relationship("SampleRecord", back_populates="experiment")
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Generate ID from content hash for reproducibility
+        self.id = self._generate_hash_id()
+        self.timestamp = datetime.utcnow()
+    
+    def _generate_hash_id(self) -> str:
+        """Generate SHA-256 hash ID from experiment parameters"""
+        content = json.dumps({
+            'reaction_smiles': self.reaction_smiles,
+            'reactants': self.reactants,
+            'conditions': {
+                'temperature': self.temperature,
+                'solvent': self.solvent,
+                'catalyst': self.catalyst
+            },
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None
+        }, sort_keys=True)
+        
+        return hashlib.sha256(content.encode()).hexdigest()
+    
+    def to_fair_format(self) -> Dict:
+        """Convert to FAIR-compliant data format"""
+        return {
+            '@context': 'https://schema.org/',
+            '@type': 'Dataset',
+            'name': f'Chemical experiment {self.id}',
+            'description': f'Automated chemical experiment: {self.reaction_smiles}',
+            'identifier': self.id,
+            'creator': self.researcher,
+            'dateCreated': self.timestamp.isoformat(),
+            'keywords': ['automated chemistry', 'robotics', self.project],
+            
+            # Provenance
+            'provenance': {
+                'wasGeneratedBy': {
+                    '@type': 'CreateAction',
+                    'instrument': self.robot_id,
+                    'actionStatus': 'CompletedActionStatus'
+                },
+                'wasDerivedFrom': self.reactants
+            },
+            
+            # Data
+            'variableMeasured': [
+                'ChemicalYield',
+                'ChemicalPurity',
+                'ReactionTemperature',
+                'ReactionTime'
+            ],
+            
+            'distribution': {
+                '@type': 'DataDownload',
+                'encodingFormat': 'application/json',
+                'contentUrl': f'/api/experiments/{self.id}/full'
+            },
+            
+            # Chemistry-specific
+            'chemicalReaction': {
+                'smiles': self.reaction_smiles,
+                'reactants': self.reactants,
+                'products': self.products,
+                'conditions': {
+                    'temperature': {'value': self.temperature, 'unit': '°C'},
+                    'solvent': self.solvent,
+                    'catalyst': self.catalyst
+                }
+            },
+            
+            # Results
+            'results': {
+                'yield': {'value': self.yield_percent, 'unit': '%'},
+                'purity': {'value': self.purity_percent, 'unit': '%'}
+            }
+        }
+    
+    def validate_for_regulatory(self) -> List[str]:
+        """
+        Validate record for regulatory compliance (FDA 21 CFR Part 11)
+        Returns list of validation errors
+        """
+        errors = []
+        
+        # Required fields
+        required_fields = ['id', 'timestamp', 'reaction_smiles', 'execution_log']
+        for field in required_fields:
+            if getattr(self, field) is None:
+                errors.append(f"Missing required field: {field}")
+        
+        # Electronic signature equivalent
+        if not self.researcher:
+            errors.append("No researcher specified (electronic signature)")
+        
+        # Audit trail check
+        if not isinstance(self.execution_log, list) or len(self.execution_log) == 0:
+            errors.append("Invalid or empty execution log")
+        
+        # Data integrity (hash verification)
+        current_hash = self._generate_hash_id()
+        if current_hash != self.id:
+            errors.append("Data integrity check failed: hash mismatch")
+        
+        return errors
+
+class ChemicalKnowledgeGraph:
+    """
+    Knowledge graph for chemical reactions and properties
+    Enables reasoning and pattern discovery
+    """
+    
+    def __init__(self, connection_string: str):
+        self.engine = sa.create_engine(connection_string)
+        self.Session = sessionmaker(bind=self.engine)
+        
+        # Initialize if needed
+        Base.metadata.create_all(self.engine)
+        
+        # Graph database connection for complex queries
+        self.graph_db = self._connect_neo4j()
+    
+    def add_experiment(self, experiment: Dict) -> str:
+        """
+        Add experiment to knowledge graph
+        Returns experiment ID
+        """
+        session = self.Session()
+        
+        # Create record
+        record = ExperimentRecord(**experiment)
+        
+        # Validate
+        errors = record.validate_for_regulatory()
+        if errors:
+            raise ValueError(f"Experiment validation failed: {errors}")
+        
+        # Store
+        session.add(record)
+        session.commit()
+        
+        # Add to graph database for relationship queries
+        self._add_to_knowledge_graph(record)
+        
+        session.close()
+        
+        return record.id
+    
+    def _add_to_knowledge_graph(self, record: ExperimentRecord):
+        """
+        Add experiment to Neo4j knowledge graph
+        """
+        from neo4j import GraphDatabase
+        
+        query = """
+        MERGE (exp:Experiment {id: $id})
+        SET exp.timestamp = $timestamp,
+            exp.yield = $yield,
+            exp.purity = $purity
+        
+        // Add reactants
+        WITH exp
+        UNWIND $reactants AS reactant
+        MERGE (r:Compound {smiles: reactant.smiles})
+        ON CREATE SET r.name = reactant.name,
+                     r.molecular_weight = reactant.mw
+        MERGE (r)-[:USED_IN {amount: reactant.amount, role: 'reactant'}]->(exp)
+        
+        // Add products
+        WITH exp
+        UNWIND $products AS product
+        MERGE (p:Compound {smiles: product.smiles})
+        ON CREATE SET p.name = product.name
+        MERGE (exp)-[:PRODUCED {yield: product.yield}]->(p)
+        
+        // Add conditions as nodes
+        MERGE (temp:Condition {type: 'temperature', value: $temperature})
+        MERGE (solv:Condition {type: 'solvent', value: $solvent})
+        MERGE (exp)-[:HAS_CONDITION]->(temp)
+        MERGE (exp)-[:HAS_CONDITION]->(solv)
+        
+        // Link to similar experiments
+        WITH exp
+        MATCH (similar:Experiment)
+        WHERE similar.id <> exp.id
+          AND similar.reaction_smiles = exp.reaction_smiles
+        MERGE (exp)-[:SIMILAR_TO {score: 0.9}]->(similar)
+        
+        RETURN exp.id
+        """
+        
+        parameters = {
+            'id': record.id,
+            'timestamp': record.timestamp.isoformat(),
+            'yield': record.yield_percent,
+            'purity': record.purity_percent,
+            'reactants': record.reactants,
+            'products': record.products,
+            'temperature': record.temperature,
+            'solvent': record.solvent
+        }
+        
+        with self.graph_db.session() as session:
+            session.run(query, parameters)
+    
+    def query_similar_reactions(self, 
+                               target_smiles: str,
+                               threshold: float = 0.8) -> List[Dict]:
+        """
+        Find similar reactions in knowledge graph
+        Uses molecular similarity and condition similarity
+        """
+        query = """
+        MATCH (target:Compound {smiles: $target_smiles})
+        
+        // Find reactions that produce this compound
+        MATCH (exp:Experiment)-[:PRODUCED]->(target)
+        
+        // Get full reaction context
+        MATCH (exp)-[:USED_IN]-(reactants:Compound)
+        MATCH (exp)-[:HAS_CONDITION]->(conditions:Condition)
+        
+        // Find similar experiments
+        MATCH (similar:Experiment)-[:PRODUCED]->(similar_product:Compound)
+        WHERE similar.id <> exp.id
+          AND apoc.similarity.jaccard(
+               exp.reaction_smiles, 
+               similar.reaction_smiles
+             ) > $threshold
+        
+        // Calculate overall similarity
+        WITH exp, similar,
+             COUNT(DISTINCT reactants) as common_reactants,
+             COUNT(DISTINCT conditions) as common_conditions
+        
+        RETURN similar.id as experiment_id,
+               similar.reaction_smiles as reaction,
+               similar.yield as yield,
+               similar.purity as purity,
+               (common_reactants * 0.4 + common_conditions * 0.6) as similarity_score
+        
+        ORDER BY similarity_score DESC
+        LIMIT 20
+        """
+        
+        with self.graph_db.session() as session:
+            result = session.run(
+                query, 
+                target_smiles=target_smiles,
+                threshold=threshold
+            )
+            
+            return [dict(record) for record in result]
+    
+    def extract_reaction_rules(self) -> List[Dict]:
+        """
+        Extract general reaction rules from knowledge graph
+        For use in retrosynthesis planning
+        """
+        query = """
+        // Find common reaction patterns
+        MATCH (r1:Compound)-[:USED_IN]->(exp:Experiment)-[:PRODUCED]->(p1:Compound)
+        MATCH (r2:Compound)-[:USED_IN]->(exp)-[:PRODUCED]->(p2:Compound)
+        
+        WHERE r1 <> r2 AND p1 <> p2
+        
+        // Group by functional group transformations
+        WITH r1, r2, p1, p2, exp,
+             apoc.convert.toJson([
+               {atom: atom.GetSymbol(), 
+                bond: bond.GetBondType()}
+               FOR atom, bond IN r1.mol.GetAtoms(), r1.mol.GetBonds()
+             ]) as r1_features,
+             // Similar for r2, p1, p2
+        
+        // Cluster similar transformations
+        CALL gds.alpha.similarity.euclidean([
+          r1_features, r2_features, p1_features, p2_features
+        ]) YIELD *
+        
+        // Extract reaction rules
+        WITH collect({
+          reactants: [r1.smiles, r2.smiles],
+          products: [p1.smiles, p2.smiles],
+          conditions: exp.conditions,
+          frequency: count(*),
+          avg_yield: avg(exp.yield)
+        }) as reactions
+        
+        // Generalize to reaction rules
+        UNWIND reactions as r
+        RETURN {
+          rule: apoc.convert.toJson({
+            reactant_patterns: r.reactants,
+            product_patterns: r.products,
+            condition_patterns: r.conditions
+          }),
+          support: r.frequency,
+          confidence: r.avg_yield / 100,
+          examples: collect(r)
+        } as reaction_rule
+        
+        ORDER BY r.frequency DESC
+        """
+        
+        # This is a complex query that would need APOC procedures
+        # Implementation would depend on specific graph database features
+        
+        return []
+```
+
+6. SIMULATION & VALIDATION ENVIRONMENT
+
+6.1 Quantum Chemistry Simulation Integration
+
+```python
+# File: sar_chem_simulation/quantum_simulator.py
+import asyncio
+from typing import Dict, List, Optional
+import numpy as np
+from pyscf import gto, scf, dft, cc
+from pyscf.geomopt.geometric_solver import optimize
+import torch
+import torchani
+
+class QuantumChemistrySimulator:
+    """
+    Integration with quantum chemistry packages for:
+    1. Reaction mechanism elucidation
+    2. Transition state finding
+    3. Property prediction
+    4. Validation of experimental results
+    """
+    
+    def __init__(self, 
+                 method: str = 'DFT',
+                 basis_set: str = 'def2-svp',
+                 functional: str = 'B3LYP',
+                 gpu_acceleration: bool = True):
+        
+        self.method = method
+        self.basis_set = basis_set
+        self.functional = functional
+        
+        # Neural network potentials for faster calculations
+        if gpu_acceleration:
+            self.nnp = torchani.models.ANI2x().to('cuda')
+        else:
+            self.nnp = torchani.models.ANI2x()
+        
+        # High-accuracy methods for final validation
+        self.ccsd_method = None  # Initialize on demand
+    
+    async def simulate_reaction_path(self,
+                                   reactants: List[str],
+                                   products: List[str],
+                                   method: str = None) -> Dict:
+        """
+        Simulate reaction pathway using NEB or string method
+        """
+        method = method or self.method
+        
+        # Convert SMILES to 3D coordinates
+        reactant_coords = await self._smiles_to_coordinates(reactants)
+        product_coords = await self._smiles_to_coordinates(products)
+        
+        if method == 'NNP':
+            # Use neural network potential for speed
+            pathway = await self._neb_nnp(reactant_coords, product_coords)
+        elif method == 'DFT':
+            # Use DFT for higher accuracy
+            pathway = await self._neb_dft(reactant_coords, product_coords)
+        elif method == 'CCSD(T)':
+            # High-accuracy single-point calculations
+            pathway = await self._single_point_ccsd(reactant_coords, product_coords)
+        
+        # Analyze pathway
+        analysis = await self._analyze_reaction_pathway(pathway)
+        
+        return {
+            'pathway': pathway,
+            'analysis': analysis,
+            'method': method,
+            'computational_cost': self._estimate_computational_cost(pathway)
+        }
+    
+    async def _neb_nnp(self, 
+                      reactant_coords: np.ndarray,
+                      product_coords: np.ndarray,
+                      n_images: int = 10) -> Dict:
+        """
+        Nudged Elastic Band using Neural Network Potential
+        """
+        from ase.neb import NEB
+        from ase.optimize import BFGS
+        import ase
+        
+        # Create images along reaction coordinate
+        images = []
+        for i in range(n_images):
+            # Interpolate coordinates
+            alpha = i / (n_images - 1)
+            coords = (1 - alpha) * reactant_coords + alpha * product_coords
+            
+            # Create ASE atoms object with NNP calculator
+            atoms = ase.Atoms(
+                symbols=['C', 'H', 'O', 'N'],  # Would be from actual molecule
+                positions=coords
+            )
+            atoms.calc = self.nnp.as_ase_calculator()
+            images.append(atoms)
+        
+        # Create NEB object
+        neb = NEB(images)
+        neb.interpolate()
+        
+        # Optimize
+        optimizer = BFGS(neb)
+        optimizer.run(fmax=0.05)  # eV/Å
+        
+        # Extract pathway
+        energies = [image.get_potential_energy() for image in images]
+        forces = [image.get_forces() for image in images]
+        
+        # Find transition state
+        ts_index = np.argmax(energies)
+        
+        return {
+            'energies': energies,
+            'forces': forces,
+            'ts_index': ts_index,
+            'ts_energy': energies[ts_index],
+            'barrier_height': energies[ts_index] - energies[0],
+            'images': images
+        }
+    
+    async def _optimize_ts(self,
+                          initial_guess: np.ndarray,
+                          method: str = 'DFT') -> Dict:
+        """
+        Transition state optimization using dimer method or eigenvector following
+        """
+        if method == 'DFT':
+            # Use PySCF for TS optimization
+            mol = gto.M(
+                atom=self._coords_to_atom_list(initial_guess),
+                basis=self.basis_set
+            )
+            
+            if self.functional:
+                mf = dft.RKS(mol)
+                mf.xc = self.functional
+            else:
+                mf = scf.RHF(mol)
+            
+            # TS optimization using geometric
+            from pyscf.geomopt import berny_solver
+            ts_opt = berny_solver.optimize(mf)
+            
+            # Frequency calculation to confirm TS
+            hessian = mf.Hessian().kernel()
+            frequencies = np.linalg.eigvalsh(hessian)
+            
+            # Should have exactly one imaginary frequency
+            imaginary_freqs = frequencies[frequencies < 0]
+            
+            return {
+                'ts_coords': ts_opt.coords,
+                'ts_energy': ts_opt.e_tot,
+                'frequencies': frequencies,
+                'imaginary_frequencies': imaginary_freqs,
+                'is_transition_state': len(imaginary_freqs) == 1
+            }
+        
+        elif method == 'NNP':
+            # Faster but less accurate TS optimization
+            # Would use ASE's dimer method with NNP
+            pass
+    
+    async def predict_properties(self,
+                               molecule_smiles: str,
+                               properties: List[str]) -> Dict:
+        """
+        Predict molecular properties using QM calculations
+        """
+        # Convert to 3D
+        coords = await self._smiles_to_coordinates([molecule_smiles])
+        
+        # Select calculation method based on required accuracy
+        if 'high_accuracy' in properties:
+            results = await self._dft_calculation(coords[0], properties)
+        else:
+            results = await self._nnp_calculation(coords[0], properties)
+        
+        # Add empirical corrections if needed
+        if 'solvation_energy' in properties:
+            results['solvation_energy'] = await self._calculate_solvation_energy(
+                coords[0]
+            )
+        
+        if 'pka' in properties:
+            results['pka'] = await self._predict_pka(coords[0])
+        
+        return results
+    
+    async def _dft_calculation(self,
+                             coords: np.ndarray,
+                             properties: List[str]) -> Dict:
+        """
+        Perform DFT calculation for accurate properties
+        """
+        # Build molecule
+        atoms = self._coords_to_atom_list(coords)
+        mol = gto.M(atom=atoms, basis=self.basis_set)
+        
+        # Run calculation
+        if self.functional:
+            mf = dft.RKS(mol)
+            mf.xc = self.functional
+            # Add dispersion correction
+            mf = mf.density_fit()
+            mf = mf.run()
+        else:
+            mf = scf.RHF(mol).run()
+        
+        # Calculate requested properties
+        results = {'energy': mf.e_tot}
+        
+        if 'dipole_moment' in properties:
+            results['dipole_moment'] = mf.dip_moment()
+        
+        if 'polarizability' in properties:
+            from pyscf.prop import polarizability
+            pol = polarizability.RHF(mf).kernel()
+            results['polarizability'] = pol
+        
+        if 'frontier_orbitals' in properties:
+            mo_energy = mf.mo_energy
+            homo_idx = mol.nelectron // 2 - 1
+            results['homo_energy'] = mo_energy[homo_idx]
+            results['lumo_energy'] = mo_energy[homo_idx + 1]
+            results['homo_lumo_gap'] = (
+                mo_energy[homo_idx + 1] - mo_energy[homo_idx]
+            )
+        
+        if 'mulliken_charges' in properties:
+            results['mulliken_charges'] = mf.mulliken_pop()
+        
+        if 'esp' in properties:
+            from pyscf.prop import esp
+            esp_calc = esp.RHF(mf).kernel()
+            results['esp'] = esp_calc
+        
+        return results
+
+class ValidationEngine:
+    """
+    Validates experimental results against simulations
+    """
+    
+    def __init__(self, simulator: QuantumChemistrySimulator):
+        self.simulator = simulator
+        self.tolerances = {
+            'yield': 0.15,  # 15% absolute difference
+            'selectivity': 0.20,
+            'energy_barrier': 5.0,  # kcal/mol
+            'reaction_energy': 10.0,  # kcal/mol
+            'spectral_match': 0.95  # Similarity score
+        }
+    
+    async def validate_experiment(self,
+                                experiment: Dict,
+                                simulation_level: str = 'DFT') -> Dict:
+        """
+        Validate experimental results against simulations
+        """
+        validation_results = {
+            'passed': True,
+            'warnings': [],
+            'errors': [],
+            'detailed_comparisons': {}
+        }
+        
+        # 1. Validate reaction energy
+        if 'reaction_energy_exp' in experiment:
+            sim_result = await self.simulator.calculate_reaction_energy(
+                experiment['reactants'],
+                experiment['products'],
+                level=simulation_level
+            )
+            
+            delta = abs(experiment['reaction_energy_exp'] - sim_result['energy'])
+            if delta > self.tolerances['reaction_energy']:
+                validation_results['warnings'].append(
+                    f"Reaction energy discrepancy: {delta:.1f} kcal/mol"
+                )
+                validation_results['passed'] = False
+            
+            validation_results['detailed_comparisons']['reaction_energy'] = {
+                'experimental': experiment['reaction_energy_exp'],
+                'simulated': sim_result['energy'],
+                'difference': delta,
+                'tolerance': self.tolerances['reaction_energy']
+            }
+        
+        # 2. Validate product identity via spectral simulation
+        if 'experimental_spectra' in experiment:
+            for spec_type, exp_spec in experiment['experimental_spectra'].items():
+                sim_spec = await self.simulator.simulate_spectrum(
+                    experiment['product_smiles'],
+                    spec_type
+                )
+                
+                similarity = self._compare_spectra(exp_spec, sim_spec)
+                
+                if similarity < self.tolerances['spectral_match']:
+                    validation_results['warnings'].append(
+                        f"{spec_type} spectral match low: {similarity:.2f}"
+                    )
+                    if similarity < 0.8:
+                        validation_results['errors'].append(
+                            f"Product identity questionable based on {spec_type}"
+                        )
+                        validation_results['passed'] = False
+                
+                validation_results['detailed_comparisons'][f'{spec_type}_match'] = {
+                    'similarity': similarity,
+                    'threshold': self.tolerances['spectral_match']
+                }
+        
+        # 3. Validate yield and selectivity trends
+        if 'yield' in experiment and 'conditions' in experiment:
+            # Simulate yield under different conditions
+            sim_yields = await self.simulator.predict_yield_trends(
+                experiment['reaction_smiles'],
+                experiment['conditions_variations']
+            )
+            
+            # Compare trends (not absolute values)
+            trend_correlation = self._calculate_trend_correlation(
+                experiment['yield_variations'],
+                sim_yields
+            )
+            
+            if trend_correlation < 0.7:
+                validation_results['warnings'].append(
+                    f"Yield trend correlation low: {trend_correlation:.2f}"
+                )
+            
+            validation_results['detailed_comparisons']['yield_trends'] = {
+                'correlation': trend_correlation,
+                'experimental': experiment['yield_variations'],
+                'simulated': sim_yields
+            }
+        
+        # 4. Validate transition state if available
+        if 'experimental_barrier' in experiment:
+            ts_simulation = await self.simulator.find_transition_state(
+                experiment['reactants'],
+                experiment['products']
+            )
+            
+            barrier_diff = abs(
+                experiment['experimental_barrier'] - ts_simulation['barrier']
+            )
+            
+            if barrier_diff > self.tolerances['energy_barrier']:
+                validation_results['warnings'].append(
+                    f"Barrier height discrepancy: {barrier_diff:.1f} kcal/mol"
+                )
+            
+            validation_results['detailed_comparisons']['transition_state'] = {
+                'experimental_barrier': experiment['experimental_barrier'],
+                'simulated_barrier': ts_simulation['barrier'],
+                'difference': barrier_diff,
+                'tolerance': self.tolerances['energy_barrier']
+            }
+        
+        # Overall validation score
+        validation_results['score'] = self._calculate_validation_score(
+            validation_results['detailed_comparisons']
+        )
+        
+        return validation_results
+    
+    def _compare_spectra(self, exp_spec: np.ndarray, 
+                        sim_spec: np.ndarray) -> float:
+        """
+        Compare experimental and simulated spectra
+        """
+        from scipy.signal import correlate
+        from scipy.spatial.distance import cosine
+        
+        # Normalize
+        exp_norm = exp_spec / np.max(exp_spec)
+        sim_norm = sim_spec / np.max(sim_spec)
+        
+        # Calculate similarity (1 - cosine distance)
+        similarity = 1 - cosine(exp_norm.flatten(), sim_norm.flatten())
+        
+        # Cross-correlation for peak alignment
+        correlation = correlate(exp_norm, sim_norm, mode='same')
+        max_corr = np.max(correlation) / (len(exp_norm) * np.std(exp_norm) * np.std(sim_norm))
+        
+        # Combined score
+        combined = 0.7 * similarity + 0.3 * max_corr
+        
+        return max(0.0, min(1.0, combined))
+```
+
+7. DEPLOYMENT & SCALING ARCHITECTURE
+
+7.1 Kubernetes Orchestration for Robotic Fleets
+
+```yaml
+# File: k8s/sar-chem-cluster.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sar-chem-config
+  namespace: chemistry-lab
+data:
+  robot-config.yaml: |
+    global:
+      lab_id: "lab-1"
+      safety_mode: "strict"
+      data_retention_days: 365
+    
+    hardware:
+      robot_count: 8
+      arm_types: ["7dof_precision", "6dof_heavy"]
+      sensor_types: ["thermal", "force_torque", "spectrometer"]
+    
+    chemistry:
+      allowed_solvents: ["dmso", "thf", "acetonitrile", "water"]
+      max_temperature_c: 250
+      max_pressure_bar: 20
+      hazard_levels: ["low", "medium", "high"]
+    
+    ai:
+      model_refresh_hours: 24
+      confidence_threshold: 0.85
+      fallback_to_human: true
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sar-chem-robots
+  namespace: chemistry-lab
+  labels:
+    app: chemical-robot
+    version: v2.5
+spec:
+  serviceName: "chemical-robot"
+  replicas: 8  # Number of robots in the cluster
+  selector:
+    matchLabels:
+      app: chemical-robot
+  template:
+    metadata:
+      labels:
+        app: chemical-robot
+        robot-id: "robot-$(POD_ORDINAL)"
+      annotations:
+        safety-level: "high"
+        requires-calibration: "daily"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: robot-controller
+        image: aethermind/chem-robot:v2.5
+        env:
+        - name: ROBOT_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['robot-id']
+        - name: ROS_DOMAIN_ID
+          value: "$(POD_ORDINAL)"
+        - name: CHEMISTRY_MODE
+          value: "production"
+        - name: SAFETY_OVERRIDE
+          value: "false"
+        ports:
+        - containerPort: 8080
+          name: api
+        - containerPort: 9090
+          name: ros2
+        - containerPort: 10000
+          name: hardware
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "4"
+            nvidia.com/gpu: "1"  # For AI models
+          limits:
+            memory: "16Gi"
+            cpu: "8"
+            nvidia.com/gpu: "1"
+        volumeMounts:
+        - name: robot-config
+          mountPath: /etc/robot
+        - name: chemical-databases
+          mountPath: /data/chemical
+          readOnly: true
+        - name: experiment-data
+          mountPath: /data/experiments
+        - name: calibration-data
+          mountPath: /data/calibration
+        - name: robot-state
+          mountPath: /var/lib/robot
+        livenessProbe:
+          exec:
+            command:
+            - /opt/robot/bin/health-check
+            - --full
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+            httpHeaders:
+            - name: X-Robot-Ready
+              value: "true"
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        startupProbe:
+          exec:
+            command:
+            - /opt/robot/bin/startup-check
+            - --hardware
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          failureThreshold: 30  # 5 minutes to start up
+        securityContext:
+          capabilities:
+            add: ["SYS_RAWIO"]  # For hardware access
+          privileged: false
+      - name: safety-monitor
+        image: aethermind/safety-monitor:v2.5
+        env:
+        - name: ROBOT_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['robot-id']
+        ports:
+        - containerPort: 8081
+          name: safety-api
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+        volumeMounts:
+        - name: safety-rules
+          mountPath: /etc/safety
+        - name: safety-logs
+          mountPath: /var/log/safety
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+      - name: data-collector
+        image: aethermind/chem-data:v2.5
+        ports:
+        - containerPort: 8082
+          name: data-api
+        volumeMounts:
+        - name: experiment-data
+          mountPath: /data/experiments
+        - name: data-queue
+          mountPath: /data/queue
+      volumes:
+      - name: robot-config
+        configMap:
+          name: sar-chem-config
+      - name: safety-rules
+        configMap:
+          name: safety-rules
+      - name: chemical-databases
+        persistentVolumeClaim:
+          claimName: chem-db-pvc
+      - name: calibration-data
+        persistentVolumeClaim:
+          claimName: calibration-pvc
+      - name: data-queue
+        emptyDir: {}
+  volumeClaimTemplates:
+  - metadata:
+      name: robot-state
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 100Gi
+      storageClassName: fast-ssd
+  - metadata:
+      name: experiment-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Ti
+      storageClassName: fast-ssd
+  - metadata:
+      name: safety-logs
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 100Gi
+      storageClassName: fast-ssd
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chemical-robot-service
+  namespace: chemistry-lab
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+spec:
+  selector:
+    app: chemical-robot
+  ports:
+  - name: api
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  - name: ros2
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  - name: safety
+    port: 8081
+    targetPort: 8081
+    protocol: TCP
+  type: LoadBalancer
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: chem-robot-hpa
+  namespace: chemistry-lab
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: sar-chem-robots
+  minReplicas: 4
+  maxReplicas: 16
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: experiments_per_second
+      target:
+        type: AverageValue
+        averageValue: 10
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 20
+        periodSeconds: 60
+      - type: Pods
+        value: 4
+        periodSeconds: 60
+      selectPolicy: Max
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: robot-calibration
+  namespace: chemistry-lab
+spec:
+  schedule: "0 2 * * *"  # 2 AM daily
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: calibration
+            image: aethermind/calibration:v2.5
+            env:
+            - name: CALIBRATION_TYPE
+              value: "full"
+            - name: ROBOT_IDS
+              value: "all"
+            resources:
+              requests:
+                memory: "4Gi"
+                cpu: "2"
+            volumeMounts:
+            - name: calibration-scripts
+              mountPath: /scripts
+            - name: calibration-results
+              mountPath: /results
+          restartPolicy: OnFailure
+          volumes:
+          - name: calibration-scripts
+            configMap:
+              name: calibration-scripts
+          - name: calibration-results
+            persistentVolumeClaim:
+              claimName: calibration-results-pvc
+```
+
+7.2 Performance Monitoring & Alerting
+
+```python
+# File: sar_chem_monitoring/performance_monitor.py
+import asyncio
+import time
+from dataclasses import dataclass
+from typing import Dict, List, Optional
+import prometheus_client as prom
+from prometheus_client import Counter, Gauge, Histogram, Summary
+import numpy as np
+
+@dataclass
+class PerformanceMetrics:
+    """Comprehensive performance metrics for chemical robots"""
+    
+    # Timing metrics
+    reaction_setup_time: Gauge
+    reaction_execution_time: Histogram
+    analysis_time: Summary
+    total_experiment_time: Gauge
+    
+    # Success metrics
+    experiments_completed: Counter
+    experiments_failed: Counter
+    success_rate: Gauge
+    
+    # Quality metrics
+    yield_deviation: Histogram
+    purity_deviation: Histogram
+    reproducibility_score: Gauge
+    
+    # Resource metrics
+    reagent_consumption: Gauge
+    solvent_consumption: Gauge
+    energy_consumption: Gauge
+    waste_generated: Gauge
+    
+    # Safety metrics
+    safety_violations: Counter
+    near_misses: Counter
+    emergency_stops: Counter
+    safety_score: Gauge
+    
+    # AI/ML metrics
+    prediction_accuracy: Gauge
+    model_inference_time: Histogram
+    training_data_points: Counter
+    
+    # Hardware metrics
+    hardware_errors: Counter
+    calibration_drift: Gauge
+    maintenance_required: Gauge
+
+class ChemicalRobotMonitor:
+    """
+    Real-time monitoring and alerting system
+    """
+    
+    def __init__(self, robot_id: str):
+        self.robot_id = robot_id
+        
+        # Initialize metrics
+        self.metrics = PerformanceMetrics(
+            # Timing
+            reaction_setup_time=Gauge(
+                f'chem_robot_{robot_id}_setup_time_seconds',
+                'Time to set up reaction'
+            ),
+            reaction_execution_time=Histogram(
+                f'chem_robot_{robot_id}_execution_time_seconds',
+                'Reaction execution time',
+                buckets=[60, 300, 600, 1800, 3600, 7200]
+            ),
+            analysis_time=Summary(
+                f'chem_robot_{robot_id}_analysis_time_seconds',
+                'Time for analysis'
+            ),
+            total_experiment_time=Gauge(
+                f'chem_robot_{robot_id}_total_experiment_time_seconds',
+                'Total experiment time'
+            ),
+            
+            # Success
+            experiments_completed=Counter(
+                f'chem_robot_{robot_id}_experiments_completed_total',
+                'Total experiments completed'
+            ),
+            experiments_failed=Counter(
+                f'chem_robot_{robot_id}_experiments_failed_total',
+                'Total experiments failed'
+            ),
+            success_rate=Gauge(
+                f'chem_robot_{robot_id}_success_rate',
+                'Experiment success rate'
+            ),
+            
+            # Quality
+            yield_deviation=Histogram(
+                f'chem_robot_{robot_id}_yield_deviation_percent',
+                'Deviation from expected yield',
+                buckets=[1, 5, 10, 20, 50]
+            ),
+            purity_deviation=Histogram(
+                f'chem_robot_{robot_id}_purity_deviation_percent',
+                'Deviation from expected purity',
+                buckets=[0.1, 0.5, 1, 2, 5]
+            ),
+            reproducibility_score=Gauge(
+                f'chem_robot_{robot_id}_reproducibility_score',
+                'Reproducibility score (0-1)'
+            ),
+            
+            # Resources
+            reagent_consumption=Gauge(
+                f'chem_robot_{robot_id}_reagent_consumption_grams',
+                'Reagent consumption'
+            ),
+            solvent_consumption=Gauge(
+                f'chem_robot_{robot_id}_solvent_consumption_ml',
+                'Solvent consumption'
+            ),
+            energy_consumption=Gauge(
+                f'chem_robot_{robot_id}_energy_consumption_kwh',
+                'Energy consumption'
+            ),
+            waste_generated=Gauge(
+                f'chem_robot_{robot_id}_waste_generated_grams',
+                'Waste generated'
+            ),
+            
+            # Safety
+            safety_violations=Counter(
+                f'chem_robot_{robot_id}_safety_violations_total',
+                'Safety violations'
+            ),
+            near_misses=Counter(
+                f'chem_robot_{robot_id}_near_misses_total',
+                'Near misses'
+            ),
+            emergency_stops=Counter(
+                f'chem_robot_{robot_id}_emergency_stops_total',
+                'Emergency stops'
+            ),
+            safety_score=Gauge(
+                f'chem_robot_{robot_id}_safety_score',
+                'Safety score (0-100)'
+            ),
+            
+            # AI/ML
+            prediction_accuracy=Gauge(
+                f'chem_robot_{robot_id}_prediction_accuracy',
+                'AI prediction accuracy'
+            ),
+            model_inference_time=Histogram(
+                f'chem_robot_{robot_id}_model_inference_time_seconds',
+                'Model inference time',
+                buckets=[0.001, 0.01, 0.1, 1, 10]
+            ),
+            training_data_points=Counter(
+                f'chem_robot_{robot_id}_training_data_points_total',
+                'Training data points collected'
+            ),
+            
+            # Hardware
+            hardware_errors=Counter(
+                f'chem_robot_{robot_id}_hardware_errors_total',
+                'Hardware errors'
+            ),
+            calibration_drift=Gauge(
+                f'chem_robot_{robot_id}_calibration_drift',
+                'Calibration drift from reference'
+            ),
+            maintenance_required=Gauge(
+                f'chem_robot_{robot_id}_maintenance_required',
+                'Maintenance required (0-1)'
+            )
+        )
+        
+        # Alert thresholds
+        self.thresholds = {
+            'success_rate': 0.9,  # Below 90%
+            'safety_score': 95,   # Below 95
+            'yield_deviation': 20,  # Above 20%
+            'purity_deviation': 5,  # Above 5%
+            'calibration_drift': 0.1,  # Above 0.1 units
+            'maintenance_required': 0.8,  # Above 0.8
+            'reproducibility': 0.95  # Below 0.95
+        }
+        
+        # Alert state
+        self.active_alerts = set()
+        
+        # Start monitoring loop
+        self.monitoring_task = asyncio.create_task(self._monitoring_loop())
+    
+    async def record_experiment(self, experiment: Dict):
+        """
+        Record experiment metrics
+        """
+        start_time = time.time()
+        
+        try:
+            # Record setup time
+            setup_time = experiment.get('setup_time', 0)
+            self.metrics.reaction_setup_time.set(setup_time)
+            
+            # Execute and monitor
+            result = await self._execute_experiment(experiment)
+            
+            # Record execution time
+            execution_time = time.time() - start_time - setup_time
+            self.metrics.reaction_execution_time.observe(execution_time)
+            
+            # Record analysis time if available
+            if 'analysis_time' in result:
+                self.metrics.analysis_time.observe(result['analysis_time'])
+            
+            # Record total time
+            total_time = time.time() - start_time
+            self.metrics.total_experiment_time.set(total_time)
+            
+            # Increment success counter
+            self.metrics.experiments_completed.inc()
+            
+            # Record quality metrics
+            if 'yield' in result and 'expected_yield' in experiment:
+                deviation = abs(result['yield'] - experiment['expected_yield'])
+                self.metrics.yield_deviation.observe(deviation)
+            
+            if 'purity' in result and 'expected_purity' in experiment:
+                deviation = abs(result['purity'] - experiment['expected_purity'])
+                self.metrics.purity_deviation.observe(deviation)
+            
+            # Record resource consumption
+            if 'reagent_used' in result:
+                self.metrics.reagent_consumption.set(result['reagent_used'])
+            
+            if 'solvent_used' in result:
+                self.metrics.solvent_consumption.set(result['solvent_used'])
+            
+            if 'energy_used' in result:
+                self.metrics.energy_consumption.set(result['energy_used'])
+            
+            if 'waste_generated' in result:
+                self.metrics.waste_generated.set(result['waste_generated'])
+            
+            # Update success rate
+            total = (self.metrics.experiments_completed._value.get() + 
+                    self.metrics.experiments_failed._value.get())
+            if total > 0:
+                success_rate = (self.metrics.experiments_completed._value.get() / 
+                              total)
+                self.metrics.success_rate.set(success_rate)
+            
+            # Check thresholds
+            await self._check_thresholds()
+            
+            return result
+            
+        except Exception as e:
+            # Record failure
+            self.metrics.experiments_failed.inc()
+            
+            # Update success rate
+            total = (self.metrics.experiments_completed._value.get() + 
+                    self.metrics.experiments_failed._value.get())
+            if total > 0:
+                success_rate = (self.metrics.experiments_completed._value.get() / 
+                              total)
+                self.metrics.success_rate.set(success_rate)
+            
+            # Check thresholds
+            await self._check_thresholds()
+            
+            raise
+    
+    async def _check_thresholds(self):
+        """
+        Check all metrics against thresholds and trigger alerts
+        """
+        # Success rate
+        success_rate = self.metrics.success_rate._value.get()
+        if success_rate < self.thresholds['success_rate']:
+            await self._trigger_alert(
+                'low_success_rate',
+                f'Success rate {success_rate:.1%} below threshold {self.thresholds["success_rate"]:.0%}'
+            )
+        
+        # Safety score
+        safety_score = self.metrics.safety_score._value.get()
+        if safety_score < self.thresholds['safety_score']:
+            await self._trigger_alert(
+                'low_safety_score',
+                f'Safety score {safety_score} below threshold {self.thresholds["safety_score"]}'
+            )
+        
+        # Calibration drift
+        drift = self.metrics.calibration_drift._value.get()
+        if drift > self.thresholds['calibration_drift']:
+            await self._trigger_alert(
+                'high_calibration_drift',
+                f'Calibration drift {drift:.3f} above threshold {self.thresholds["calibration_drift"]}'
+            )
+        
+        # Maintenance required
+        maintenance = self.metrics.maintenance_required._value.get()
+        if maintenance > self.thresholds['maintenance_required']:
+            await self._trigger_alert(
+                'maintenance_needed',
+                f'Maintenance required indicator {maintenance:.2f} above threshold {self.thresholds["maintenance_required"]}'
+            )
+    
+    async def _trigger_alert(self, alert_type: str, message: str):
+        """
+        Trigger alert and notify relevant systems
+        """
+        if alert_type in self.active_alerts:
+            return  # Already active
+        
+        self.active_alerts.add(alert_type)
+        
+        # Send to alert manager
+        await self._send_alert({
+            'robot_id': self.robot_id,
+            'alert_type': alert_type,
+            'message': message,
+            'timestamp': time.time(),
+            'severity': self._determine_severity(alert_type),
+            'metrics': self._get_current_metrics()
+        })
+        
+        # Log alert
+        print(f"ALERT [{self.robot_id}]: {alert_type} - {message}")
+        
+        # If critical, initiate safe shutdown
+        if self._is_critical_alert(alert_type):
+            await self._initiate_safe_shutdown()
+    
+    async def _monitoring_loop(self):
+        """
+        Continuous monitoring loop
+        """
+        while True:
+            try:
+                # Update dynamic metrics
+                await self._update_dynamic_metrics()
+                
+                # Check for stuck processes
+                await self._check_for_hangs()
+                
+                # Update safety score
+                await self._update_safety_score()
+                
+                # Update maintenance indicator
+                await self._update_maintenance_indicator()
+                
+                # Check thresholds
+                await self._check_thresholds()
+                
+                # Clear resolved alerts
+                await self._clear_resolved_alerts()
+                
+            except Exception as e:
+                print(f"Monitoring error: {e}")
+            
+            await asyncio.sleep(60)  # Check every minute
+    
+    def _get_current_metrics(self) -> Dict:
+        """
+        Get current metric values for alert context
+        """
+        return {
+            'success_rate': self.metrics.success_rate._value.get(),
+            'safety_score': self.metrics.safety_score._value.get(),
+            'calibration_drift': self.metrics.calibration_drift._value.get(),
+            'maintenance_required': self.metrics.maintenance_required._value.get(),
+            'experiments_completed': self.metrics.experiments_completed._value.get(),
+            'experiments_failed': self.metrics.experiments_failed._value.get(),
+            'safety_violations': self.metrics.safety_violations._value.get(),
+            'near_misses': self.metrics.near_misses._value.get(),
+            'emergency_stops': self.metrics.emergency_stops._value.get()
+        }
+```
+
+This comprehensive implementation provides the complete technical foundation for AETHERMIND Robotics v2.5 Chemist Edition. The system integrates quantum-informed AI, advanced robotics control, automated laboratory hardware, and comprehensive data management into a cohesive platform for autonomous chemical research and development.
